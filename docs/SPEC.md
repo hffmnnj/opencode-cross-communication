@@ -17,7 +17,7 @@ Give agents in one OpenCode session family asynchronous DMs and a shared group c
 2. Send a DM to a session, parent, or root; broadcast to the current family.
 3. Reply in a thread and inspect a bounded persistent conversation log.
 4. Return per-recipient admission receipts, with explicit failures and safe retries.
-5. Register discoverable native tools and a concise session command.
+5. Register discoverable native tools with typed results; do not log private chat for command output.
 6. Load in the existing main OpenCode server through watched configuration.
 
 ## Acceptance checks
