@@ -28,6 +28,12 @@ See `docs/DEPLOY.md` for activation, verification, and rollback.
 Rollback is removing this entry only; it leaves user data and other
 settings alone.
 
+The active-session reader discovers an already-running managed service,
+including its dynamic port and credentials; it never starts or stops one.
+It accepts only an authenticated loopback endpoint owned by the plugin's
+server process. Explicit non-managed endpoints remain supported as described
+in `docs/DEPLOY.md`. Discovery or identity failures disable chat delivery.
+
 ## Usage
 
 Tools live under the `agent_chat` namespace. Use the Code Mode

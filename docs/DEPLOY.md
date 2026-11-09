@@ -56,13 +56,23 @@ Use the `agent_chat` Code Mode tools. There is no slash command: V2's
 server command API has no return channel, and private chat must not be
 written to server logs as a substitute.
 
-The plugin reads `/api/session/active` from the same server process,
-verified by `/api/info` PID. Its default origin is
-`http://127.0.0.1:4108`; a different loopback HTTP origin may be supplied
-as plugin option `apiBaseURL`. It uses the server process's
-`OPENCODE_SERVER_USERNAME` and `OPENCODE_SERVER_PASSWORD` environment
-variables without logging or persisting them. Missing credentials,
-identity mismatch, redirects, and invalid activity responses fail closed.
+The plugin discovers the existing managed service on each activity read with
+`Service.discover()`; it never starts or stops a service. The discovered
+loopback HTTP origin and Basic credentials come from the local service
+registration, including on Windows with a dynamic port. Discovery's health
+probe runs in an isolated worker that rejects non-loopback targets and
+redirects without changing the host's global `fetch`. The plugin then checks
+`/api/info` against its own process ID before reading `/api/session/active`.
+Missing or unready registration, missing credentials, a different process,
+redirects, and invalid activity responses fail closed (`unavailable`).
+
+For a non-managed server, set plugin option `apiBaseURL` to its explicit
+loopback HTTP origin. This legacy mode uses the server process's
+`OPENCODE_SERVER_USERNAME` (default `opencode`) and
+`OPENCODE_SERVER_PASSWORD`. It performs the same PID and activity checks;
+it does not fall back to discovery if the explicit endpoint fails. Neither
+mode logs or persists credentials. Only `127.0.0.1` and `::1` loopback
+addresses are accepted, not DNS names or remote addresses.
 
 ## 4. Rollback
 
