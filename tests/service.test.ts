@@ -85,6 +85,86 @@ describe("members", () => {
     expect(byId.get(alice)?.active).toBe(true);
   });
 
+  test("members_and_group_keep_active_descendants_among_old_historical_sessions", async () => {
+    const { ports, svc, root, alice, bob, carol } = rig();
+    for (let i = 0; i < 80; i += 1) ports.addSession(`ses-old-${i.toString().padStart(2, "0")}`, root);
+    ports.addSession("ses-active-nested", "ses-old-00");
+    ports.advance(300_001);
+    ports.activeSet.add("ses-active-nested");
+
+    const result = await svc.members(alice);
+    expect(result.members.map((member) => member.sessionID).sort()).toEqual(
+      [root, alice, bob, carol, "ses-active-nested"].sort(),
+    );
+    expect(result.members.find((member) => member.sessionID === "ses-active-nested")?.active).toBe(true);
+
+    const message = await svc.send(alice, { to: "group", text: "team" }, "op-old-family");
+    expect(message.receipts.map((receipt) => receipt.sessionID).sort()).toEqual(
+      [root, bob, carol, "ses-active-nested"].sort(),
+    );
+    expect(message.receipts.every((receipt) => receipt.status === "admitted")).toBe(true);
+    expect(promptTargets(ports).sort()).toEqual([root, bob, carol, "ses-active-nested"].sort());
+    expect(ports.promptCalls.every((call) => call.resume === false)).toBe(true);
+  });
+
+  test("members_omit_inactive_only_after_five_minutes_since_idle", async () => {
+    const { ports, svc, root, alice, bob } = rig();
+    ports.activeSet.delete(bob);
+    const record = ports.sessions.get(bob)!;
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: ports.nowValue } });
+    ports.advance(300_000);
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).toContain(bob);
+    ports.advance(1);
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).not.toContain(bob);
+
+    // A later metadata update does not make the idle session active again.
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: record.time.updated, updated: ports.nowValue } });
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).not.toContain(bob);
+    ports.activeSet.add(bob);
+    const result = await svc.members(alice);
+    expect(result.rootID).toBe(root);
+    expect(result.members.find((member) => member.sessionID === bob)?.active).toBe(true);
+
+    ports.activeSet.delete(bob);
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: ports.nowValue } });
+    expect((await svc.members(alice)).members.find((member) => member.sessionID === bob)?.active).toBe(false);
+  });
+
+  test("members_reject_unverifiable_inactivity_timestamp", async () => {
+    const { ports, svc, alice, bob } = rig();
+    ports.activeSet.delete(bob);
+    const record = ports.sessions.get(bob)!;
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: Number.NaN } });
+    const error = await captureError(svc.members(alice));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("unavailable");
+  });
+
+  test("group_uses_activity_snapshot_after_family_discovery", async () => {
+    const { ports, svc, alice, bob, root, carol } = rig();
+    ports.advance(300_001);
+    ports.activeQueue.push(new Set([root, alice, carol]));
+    const message = await svc.send(alice, { to: "group", text: "team" }, "op-newly-active");
+    expect(message.receipts.map((receipt) => receipt.sessionID).sort()).toEqual([root, bob, carol].sort());
+    expect(promptTargets(ports).sort()).toEqual([root, bob, carol].sort());
+  });
+
+  test("group_rejects_unverified_descendant_even_below_an_old_ancestor", async () => {
+    const { ports, svc, alice, root } = rig();
+    ports.addSession("ses-old-parent", root);
+    ports.addSession("ses-outsider", "ses-different-root");
+    ports.advance(300_001);
+    const list = ports.session.list;
+    ports.session.list = async (input, options) => input.parentID === "ses-old-parent"
+      ? { data: [ports.sessions.get("ses-outsider")!], cursor: {} }
+      : list(input, options);
+
+    const error = await captureError(svc.send(alice, { to: "group", text: "team" }, "op-bad-ancestry"));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("not_allowed");
+    expect(ports.promptCalls).toHaveLength(0);
+  });
+
   test("members_cyclic_ancestry_fails_closed", async () => {
     const { ports, svc } = rig();
     ports.addSession("ses-x", "ses-y", { agent: "x-agent" });

@@ -147,7 +147,6 @@ export function createChatService(ports: ChatPorts): ChatService {
           }
           seen.add(child.id);
           result.push(child);
-          if (result.length > LIMITS.members) fail("family_limit", "Family exceeds 64 members.");
         }
         const next = page.cursor.next;
         if (next !== undefined && next !== null && (!nonempty(next) || cursors.has(next))) {
@@ -157,6 +156,18 @@ export function createChatService(ports: ChatPorts): ChatService {
         if (cursor) cursors.add(cursor);
       } while (cursor !== undefined);
     }
+    return result;
+  }
+
+  function currentFamily(discovered: readonly SessionRecord[], active: Readonly<Record<string, { readonly type: "running" }>>): SessionRecord[] {
+    const cutoff = now() - 300_000;
+    const result = discovered.filter((member) => {
+      if (isActive(active, member.id)) return true;
+      const lastIdle = member.time.idle === undefined ? member.time.updated : member.time.idle;
+      if (typeof lastIdle !== "number" || !Number.isFinite(lastIdle)) fail("unavailable", "Session inactivity could not be verified.");
+      return lastIdle >= cutoff;
+    });
+    if (result.length > LIMITS.members) fail("family_limit", "Family exceeds 64 members.");
     return result;
   }
 
@@ -298,7 +309,7 @@ export function createChatService(ports: ChatPorts): ChatService {
         kind = "group";
         const discovered = await family(root, signal);
         active = await activeSessions(signal);
-        recipients = discovered.filter((member) => member.id !== caller && member.time.archived === undefined && isActive(active, member.id)).map((member) => member.id);
+        recipients = currentFamily(discovered, active).filter((member) => member.id !== caller && member.time.archived === undefined && isActive(active, member.id)).map((member) => member.id);
         if (recipients.length === 0) fail("inactive", inactiveDetail);
       } else {
         kind = "direct";
@@ -336,7 +347,7 @@ export function createChatService(ports: ChatPorts): ChatService {
       const { root } = await ancestry(caller, signal);
       const discovered = await family(root, signal);
       const active = await activeSessions(signal);
-      return { self: caller, rootID: root.id, members: discovered.map((member) => asParticipant(member, isActive(active, member.id))) };
+      return { self: caller, rootID: root.id, members: currentFamily(discovered, active).map((member) => asParticipant(member, isActive(active, member.id))) };
     },
     send(caller, input, operationID, signal) { return write(caller, input, operationID, input.to, undefined, signal); },
     reply(caller, input, operationID, signal) {
