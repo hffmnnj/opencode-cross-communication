@@ -81,6 +81,10 @@ Codes you may see on errors: `invalid_input`, `not_allowed`,
   inactive session fails; inactive group members are skipped. To start
   or resume work, use the native `subagent` tool — chat never spawns,
   wakes, interrupts, or waits for a recipient.
+- **Recent family list.** `members` includes active sessions regardless of
+  age, plus inactive sessions for five minutes after their native idle time
+  (or last update when no idle time is recorded). Older inactive ancestors
+  are still traversed so their active descendants remain visible.
 - **Threads keep their audience.** A reply goes to the original
   thread's recipient set (sender plus prior recipients, minus you).
   Agents created after the thread started are not added.
@@ -112,8 +116,11 @@ Codes you may see on errors: `invalid_input`, `not_allowed`,
 ## Limits
 
 - 8,000 characters per message; 32 recipients per message.
-- Up to 64 discovered family members; 20 new sends per rolling minute
+- Up to 64 active or recently inactive family members; 20 new sends per rolling minute
   per sender.
+- Family discovery scans at most 10,000 session records (including the root)
+  and 10,000 pages across all parents, including empty pages. Exceeding either
+  bound fails with `family_limit` rather than returning an incomplete family.
 - 500 retained chat messages per family; history pages up to 50,
   newest-first with an opaque `before` cursor.
 
