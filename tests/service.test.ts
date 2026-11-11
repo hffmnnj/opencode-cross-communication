@@ -201,6 +201,98 @@ describe("members", () => {
     expect((error as ChatError).code).toBe("family_limit");
   });
 
+  test("members_family_scan_rejects_over_10000_records_including_old_members", async () => {
+    const { ports, svc, root } = rig();
+    ports.advance(300_001);
+    const oldChildren = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `ses-historical-${index}`, parentID: root, time: { created: 1, updated: 1 },
+    }));
+    let pages = 0;
+    ports.session.list = async ({ parentID, cursor, limit }) => {
+      pages += 1;
+      if (parentID !== root) return { data: [], cursor: {} };
+      const start = cursor ? Number(cursor) : 0;
+      const end = start + (limit ?? 64);
+      return { data: oldChildren.slice(start, end), cursor: { next: end < oldChildren.length ? String(end) : null } };
+    };
+
+    const error = await captureError(svc.members(root));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 records");
+    expect(pages).toBe(157);
+  });
+
+  test("group_family_scan_stops_after_10000_empty_pages_with_unique_cursors", async () => {
+    const { ports, svc, root } = rig();
+    let pages = 0;
+    ports.session.list = async () => {
+      pages += 1;
+      if (pages > 10_000) throw new Error("unbounded family scan");
+      return { data: [], cursor: { next: `cursor-${pages}` } };
+    };
+
+    const error = await captureError(svc.send(root, { to: "group", text: "team" }, "op-empty-cursors"));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 pages");
+    expect(pages).toBe(10_000);
+    expect(ports.promptCalls).toHaveLength(0);
+    expect(ports.storageSets).toHaveLength(0);
+  });
+
+  test("members_family_scan_accepts_a_terminal_10000th_page", async () => {
+    const { ports, svc, root } = rig();
+    let pages = 0;
+    ports.session.list = async () => {
+      pages += 1;
+      return { data: [], cursor: { next: pages < 10_000 ? `cursor-${pages}` : null } };
+    };
+
+    const result = await svc.members(root);
+    expect(result.members.map((member) => member.sessionID)).toEqual([root]);
+    expect(pages).toBe(10_000);
+  });
+
+  test("members_family_scan_counts_pages_across_all_parents", async () => {
+    const { ports, svc, root } = rig();
+    const children = Array.from({ length: 5_000 }, (_, index) => ({
+      id: `ses-child-${index}`, parentID: root, time: { created: 1, updated: 1 },
+    }));
+    let pages = 0;
+    ports.session.list = async ({ parentID, cursor, limit }) => {
+      pages += 1;
+      if (parentID !== root) return { data: [], cursor: { next: cursor ? null : "second-page" } };
+      const start = cursor ? Number(cursor) : 0;
+      const end = start + (limit ?? 64);
+      return { data: children.slice(start, end), cursor: { next: end < children.length ? String(end) : null } };
+    };
+
+    const error = await captureError(svc.members(root));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 pages");
+    expect(pages).toBe(10_000);
+  });
+
+  test("members_family_scan_accepts_10000_records_and_pages", async () => {
+    const { ports, svc, root } = rig();
+    ports.advance(300_001);
+    let pages = 0;
+    ports.session.list = async ({ parentID }) => {
+      pages += 1;
+      const parentIndex = parentID === root ? 0 : Number(parentID?.slice("ses-chain-".length));
+      const data = parentIndex < 9_999
+        ? [{ id: `ses-chain-${parentIndex + 1}`, parentID, time: { created: 1, updated: 1 } }]
+        : [];
+      return { data, cursor: {} };
+    };
+
+    const result = await svc.members(root);
+    expect(result.members.map((member) => member.sessionID)).toEqual([root]);
+    expect(pages).toBe(10_000);
+  });
+
   test("members_unknown_caller_fails_closed", async () => {
     const { svc } = rig();
     expect(await captureError(svc.members("ses-nope"))).toBeInstanceOf(ChatError);

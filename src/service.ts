@@ -8,6 +8,8 @@ import {
 type StoredMessage = ChatMessage & { readonly requestFingerprint?: string };
 interface StoredLog extends ChatLog { readonly messages: readonly StoredMessage[] }
 const locks = new Map<string, Promise<void>>();
+const FAMILY_RECORD_SCAN_LIMIT = 10_000;
+const FAMILY_PAGE_SCAN_LIMIT = 10_000;
 
 async function locked<T>(key: string, run: () => Promise<T>): Promise<T> {
   const previous = locks.get(key) ?? Promise.resolve();
@@ -129,12 +131,15 @@ export function createChatService(ports: ChatPorts): ChatService {
   async function family(root: SessionRecord, signal?: AbortSignal): Promise<SessionRecord[]> {
     const result = [root];
     const seen = new Set([root.id]);
+    let pagesScanned = 0;
     for (let index = 0; index < result.length; index++) {
       const parent = result[index]!;
       let cursor: string | undefined;
       const cursors = new Set<string>();
       do {
         aborted(signal);
+        if (pagesScanned >= FAMILY_PAGE_SCAN_LIMIT) fail("family_limit", "Family discovery exceeds 10,000 pages.");
+        pagesScanned += 1;
         let page: Awaited<ReturnType<ChatPorts["session"]["list"]>>;
         try {
           page = await ports.session.list({ parentID: parent.id, limit: LIMITS.members, ...(cursor ? { cursor } : {}) }, { signal });
@@ -145,6 +150,7 @@ export function createChatService(ports: ChatPorts): ChatService {
           if (!child || !nonempty(child.id) || child.parentID !== parent.id || !object(child.time) || seen.has(child.id)) {
             fail("not_allowed", "Family discovery could not be verified.");
           }
+          if (result.length >= FAMILY_RECORD_SCAN_LIMIT) fail("family_limit", "Family discovery exceeds 10,000 records.");
           seen.add(child.id);
           result.push(child);
         }

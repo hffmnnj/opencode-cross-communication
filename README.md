@@ -118,6 +118,9 @@ Codes you may see on errors: `invalid_input`, `not_allowed`,
 - 8,000 characters per message; 32 recipients per message.
 - Up to 64 active or recently inactive family members; 20 new sends per rolling minute
   per sender.
+- Family discovery scans at most 10,000 session records (including the root)
+  and 10,000 pages across all parents, including empty pages. Exceeding either
+  bound fails with `family_limit` rather than returning an incomplete family.
 - 500 retained chat messages per family; history pages up to 50,
   newest-first with an opaque `before` cursor.
 
