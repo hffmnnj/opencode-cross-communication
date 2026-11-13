@@ -1,21 +1,36 @@
-# opencode-cross-communication
+<p align="center">
+  <img src="assets/banner.png" alt="Cross Communication: signals between agents, illustrated with maritime signal flags" width="100%">
+</p>
 
-Async DMs and a shared group chat for agents inside one OpenCode session
-family. Messages arrive as native user input (`delivery: "steer"`,
-`resume: false`), so a running agent picks them up at a work boundary
-without being interrupted, and idle agents are never woken.
+# Cross Communication
+
+Async direct messages and one shared group chat for agents in the same
+OpenCode session family.
+
+Messages arrive as native user input with `delivery: "steer"` and
+`resume: false`. A running agent picks them up at a work boundary without
+being interrupted; an idle agent is never woken.
+
+## Requirements
+
+- OpenCode V2, tested against 2.1.4.
+- Bun 1.3.5 or newer to build.
+- An existing OpenCode server. The plugin never starts, stops, or replaces
+  one.
 
 ## Install
 
-Native Promise plugin for OpenCode V2 (developed against 2.1.4).
-Package export is `dist/index.js`; build with:
+This is a local plugin directory. From the checkout:
 
 ```sh
 bun install && bun run check
 ```
 
-Register it in your existing OpenCode config with the **absolute**
-package path (watched config picks it up, no restart):
+`bun run check` typechecks, runs the tests, and builds `dist/index.js`.
+Keep the root `index.ts`: OpenCode's local-directory loader resolves it.
+
+Add the checkout's **absolute** directory to `plugins` in your OpenCode
+config:
 
 ```json
 {
@@ -24,109 +39,155 @@ package path (watched config picks it up, no restart):
 }
 ```
 
-See `docs/DEPLOY.md` for activation, verification, and rollback.
-Rollback is removing this entry only; it leaves user data and other
-settings alone.
+The config is watched, so activation does not require a server restart.
+Use the directory path for this local plugin, and build before enabling it.
 
-The active-session reader discovers an already-running managed service,
-including its dynamic port and credentials; it never starts or stops one.
-It accepts only an authenticated loopback endpoint owned by the plugin's
-server process. Explicit non-managed endpoints remain supported as described
-in `docs/DEPLOY.md`. Discovery or identity failures disable chat delivery.
+See [docs/DEPLOY.md](docs/DEPLOY.md) for activation checks, explicit
+`apiBaseURL` setup, and rollback. Rollback is removing this entry only;
+user data, other plugins, and other settings stay untouched.
 
-## Usage
+### Session-activity access
 
-Tools live under the `agent_chat` namespace. Use the Code Mode
-signatures your session discovers (native direct tool names carry an
-underscore namespace prefix, so prefer what the catalog shows):
+The plugin reads active-session membership from the already-running
+managed server. Discovery supplies the local endpoint, dynamic port, and
+Basic credentials; the plugin never starts or stops a service.
+
+The endpoint must be authenticated loopback (`127.0.0.1` or `::1`) and
+its `/api/info` PID must match the plugin's own server process.
+Discovery, credential, wrong-process, redirect, or response failures
+disable chat delivery (`unavailable`) instead of guessing.
+
+For a non-managed server, set the plugin's `apiBaseURL` option and the
+server's `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`. That
+explicit mode does not fall back to discovery. Credentials are not logged
+or persisted. Details are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Use
+
+Tools live in the `agent_chat` namespace. Use the Code Mode signatures
+your session discovers; native direct tool names use an underscore
+namespace prefix.
 
 ```ts
-// Who is in my session family?
-const family = await tools.agent_chat.members();
+// List family members with active/archived state.
+await tools.agent_chat.members();
 // { self, rootID, members: [{ sessionID, parentID?, agent?, title?, archived, active }] }
 
-// DM a sibling, your parent, or the family root
+// Send a direct message.
 await tools.agent_chat.send({ to: "ses_abc123", text: "Schema is ready, see thread." });
 await tools.agent_chat.send({ to: "parent", text: "Need a decision on the retry limit." });
 await tools.agent_chat.send({ to: "root", text: "Milestone shipped, receipts attached." });
+await tools.agent_chat.send({ to: ["ses_abc123", "ses_def456"], text: "Both of you, please review." });
 
-// Broadcast to every other active family member
+// Broadcast to active family members, excluding yourself (subject to the
+// 32-recipient cap below).
 await tools.agent_chat.send({ to: "group", text: "Starting the migration slice now." });
 
-// Reply inside the original thread (keeps the original audience)
+// Retry safely with the same request ID and payload.
+await tools.agent_chat.send({ to: "ses_abc123", text: "Schema is ready.", requestID: "schema-ready-1" });
+
+// Reply to the thread's existing audience.
 await tools.agent_chat.reply({ messageID: "chat_...", text: "Ack, folding that in." });
 
-// Read back what you are allowed to see (newest first)
+// Read visible history, newest first.
 await tools.agent_chat.history({ limit: 20 });
 await tools.agent_chat.history({ threadID: "chat_...", before: "chat_...", limit: 20 });
 
-// Re-check per-recipient admission for a message you sent
+// Re-read admission receipts for one stored message.
 await tools.agent_chat.receipt({ messageID: "chat_..." });
 ```
 
-Codes you may see on errors: `invalid_input`, `not_allowed`,
-`inactive`, `not_found`, `family_limit`, `rate_limit`, `unavailable`,
-`id_conflict`.
+Tool errors use: `invalid_input`, `not_allowed`, `inactive`, `not_found`,
+`family_limit`, `rate_limit`, `unavailable`, `id_conflict`.
 
-## Behavior worth knowing
+## Audience and eligibility
 
-- **Family only.** DMs and group chat stay inside one root-ancestry
-  family (nested children, native forks, and worktrees included). There is no
-  cross-root chat. Private DMs are visible only to sender and
-  recipient; group messages are visible to the whole family.
-- **Identity comes from the runtime**, never from a caller-supplied
-  field. `send`/`reply` act as whoever invoked the tool.
-- **Active only.** Eligibility comes from native `session.active()`
-  and is rechecked immediately before each admission. A DM to an
-  inactive session fails; inactive group members are skipped. To start
-  or resume work, use the native `subagent` tool — chat never spawns,
-  wakes, interrupts, or waits for a recipient.
-- **Threads keep their audience.** A reply goes to the original
-  thread's recipient set (sender plus prior recipients, minus you).
-  Agents created after the thread started are not added.
-- **Receipts are admission, not attention.** `admitted` means the
-  message reached the recipient's durable inbox; it does not mean the
-  message was read, seen by the model, or acted on. `pending`,
-  `failed`, and `unknown` distinguish "not yet", "rejected", and
-  "could not confirm" — treat `unknown` as uncertain, not delivered.
-- **No exact atomicity promise.** The native API has no atomic
-  check-active-plus-admit. The plugin rechecks right before admission
-  and never resumes a session, so if a recipient finishes in that tiny
-  race the message may stay queued without waking it.
+- **Same family only.** Membership is verified root-session ancestry,
+  not agent name, title, or working directory. Nested descendants of the
+  root are included; there is no cross-root chat.
+- **Private and group visibility.** A direct message is visible to its
+  sender and recipients. A group message is visible to the whole family.
+- **Runtime identity.** `send` and `reply` act as the session executing
+  the tool. There is no caller-supplied sender field.
+- **Active only.** Native `session.active()` is the authority, and it is
+  rechecked immediately before each admission. A direct message to an
+  inactive session fails with `inactive`; inactive group members are
+  skipped. Archived sessions are not valid direct recipients and are
+  skipped in group fan-out.
+- **Threads keep their audience.** A reply reaches the original sender
+  and recipients, minus you, limited to those still active. Agents that
+  join the family later are not added.
+- **No waking or spawning.** Chat never launches, resumes, interrupts, or
+  waits for an agent. Use the native `subagent` tool to start or resume
+  work.
+- **Peer text is data.** Incoming bodies are labelled as peer-provided
+  data with stable IDs, not as user instructions or authority. Existing
+  prompt guards may still reject delivery; cache-protection or permission
+  blocks are reported, never bypassed. There are no auto-acknowledgments
+  or relay loops.
+
+## Delivery, receipts, and retries
+
+- **Admission is not attention.** `admitted` means the message reached the
+  recipient's durable inbox. It does not mean the message was read, seen
+  by the model, or acted on. `pending` means not yet, `failed` means
+  rejected or unavailable, and `unknown` means unconfirmed. Treat
+  `unknown` as not delivered.
+- **No atomic check-and-admit.** The native API has no atomic
+  check-active-and-admit operation. The plugin rechecks immediately before
+  admission and never resumes a session. If a recipient finishes in that
+  narrow race, the message can remain queued without waking it.
 - **Cancellation is best effort.** V2's plugin adapter does not propagate
   request signals into in-flight native session calls. A cancelled send
-  can still finish admission; use its stable request ID to reconcile a
-  retry rather than assuming cancellation withdrew the message.
-- **Safe retries.** Repeating the same send with the same `requestID`
-  is idempotent and returns the existing message. Reusing a
-  `requestID` with a changed payload is rejected (`id_conflict`).
-  Stable IDs and the durable log cover retries, not indefinite
-  exactly-once guarantees after log eviction. The native transcript is
-  retained by OpenCode separately.
-- **Peer text is data.** Incoming message bodies arrive labelled as
-  peer-provided data with a stable message ID, never as new user
-  instructions or authority. Existing prompt guards can still reject
-  delivery, and cache-protection or permission blocks are reported,
-  never bypassed. There are no auto-acknowledgments or relay loops.
+  can still finish admission; reconcile with the stable message ID instead
+  of assuming cancellation withdrew it.
+- **Retries are stable, not eternal.** Repeating a send with the same
+  `requestID` and payload reuses the stored message and inbox IDs.
+  Already-admitted recipients are not prompted again; any receipt not yet
+  admitted is retried with the same inbox ID. Changing the payload,
+  target, or replied-to message under that `requestID` fails with
+  `id_conflict`. These guarantees cover the retained log, not indefinite
+  exactly-once delivery. OpenCode retains the native transcript separately.
+- **Stored history is local state.** Each family has a bounded chat log in
+  versioned plugin storage. This version provides no migration for stored
+  chat data, so changing the storage layout or key would orphan existing
+  history. Do not treat the log as durable messaging infrastructure.
 
 ## Limits
 
-- 8,000 characters per message; 32 recipients per message.
-- Up to 64 discovered family members; 20 new sends per rolling minute
-  per sender.
-- 500 retained chat messages per family; history pages up to 50,
-  newest-first with an opaque `before` cursor.
+| Bound | Value |
+| --- | --- |
+| Message text | 8,000 characters |
+| Recipients per message | 32, including `group` fan-out |
+| Family size | 64 sessions, including the root |
+| Ancestry chain | 64 sessions, including the caller |
+| Messages per sender | 20 per rolling 60 seconds |
+| Retained chat messages | 500 per family |
+| History page | 1–50 messages, default 50 |
 
-## Cache note
+These are size, flood, discovery, and storage bounds, not liveness
+guarantees.
+When the retained log is full, the plugin evicts only messages whose
+receipts are all `admitted` or `failed`; if none can be evicted, a new
+send fails with `unavailable`.
 
-Delivery only appends native user input. The plugin adds no
-context/system/model/HTTP transforms and does not touch prior history
-or cache keys. Registering the plugin adds static new tools, which
-changes the tool catalog once; ordinary messages keep that catalog
-stable. Provider caching and native compaction remain provider/runtime
-behavior, so 100% cache hits cannot be guaranteed.
+## Cache behavior
+
+Delivery only appends native user input. The plugin adds no context,
+system, model, or HTTP transforms and does not alter prior history or
+cache keys. Registering the plugin adds new tools, which changes the tool
+catalog once; ordinary messages keep that catalog stable. Provider
+caching and native compaction remain runtime/provider behavior, so 100%
+cache hits cannot be guaranteed.
 
 ## Design sources
 
-- [OpenCode V2 plugin API](https://opencode.ai/v2/docs/build/plugins): native tools, durable user prompt admission, and plugin storage. The running server's `/openapi.json` is the compatibility authority for this installation.
-- [Codex multi-agent tool definitions](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents_spec.rs): `send_message` queues coordination without triggering a new turn; `followup_task` is a separate lifecycle operation. Group chat and private history here are this plugin's own design, not claims about Codex.
+- [OpenCode V2 plugin API](https://opencode.ai/v2/docs/build/plugins):
+  native tools, durable user prompt admission, and plugin storage. The
+  running server's `/openapi.json` is the compatibility authority for this
+  installation.
+- [Codex multi-agent tool definitions](https://github.com/openai/codex/blob/main/codex-rs/core/tools/handlers/multi_agents_spec.rs):
+  `send_message` queues coordination without triggering a new turn;
+  `followup_task` is a separate lifecycle operation. Group chat and
+  private history here are this plugin's own design, not claims about
+  Codex.
