@@ -5,7 +5,7 @@ alternate port or profile, no service lifecycle changes.
 
 ## 1. Build
 
-In `/absolute/path/to/opencode-cross-communication`:
+In your local checkout of `opencode-cross-communication`:
 
 ```sh
 bun install && bun run check
