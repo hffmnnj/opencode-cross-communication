@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Cross Communication: signals between agents, illustrated with maritime signal flags" width="100%">
+  <img src="https://unpkg.com/hffmnnj.cross-communication@0.1.0/assets/banner.png" alt="Cross Communication: signals between agents, illustrated with maritime signal flags" width="100%">
 </p>
 
 # Cross Communication
@@ -14,37 +14,36 @@ being interrupted; an idle agent is never woken.
 ## Requirements
 
 - OpenCode V2, tested against 2.1.4.
-- Bun 1.3.5 or newer to build.
 - An existing OpenCode server. The plugin never starts, stops, or replaces
   one.
+- Bun 1.3.5 or newer to build from source.
 
 ## Install
 
-This is a local plugin directory. From the checkout:
-
-```sh
-bun install && bun run check
-```
-
-`bun run check` typechecks, runs the tests, and builds `dist/index.js`.
-Keep the root `index.ts`: OpenCode's local-directory loader resolves it.
-
-Add the checkout's **absolute** directory to `plugins` in your OpenCode
-config:
+This package is distributed as `hffmnnj.cross-communication`. Add it to
+the `plugins` array in your OpenCode config:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/absolute/path/to/opencode-cross-communication"]
+  "plugins": ["hffmnnj.cross-communication"]
 }
 ```
 
-The config is watched, so activation does not require a server restart.
-Use the directory path for this local plugin, and build before enabling it.
+OpenCode V2 resolves the npm package for this entry; no clone, local
+build, or absolute path is needed. The config is watched, so activation
+does not require a server restart.
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for activation checks, explicit
-`apiBaseURL` setup, and rollback. Rollback is removing this entry only;
-user data, other plugins, and other settings stay untouched.
+If you previously loaded this plugin from a checkout, replace that
+absolute directory entry with the package name; do not list both, because
+the plugin would register twice. The runtime plugin ID stays
+`opencode-cross-communication`, and stored chat history is keyed by that
+ID. Changing the ID would orphan existing per-family logs. Rollback is
+removing this entry only; user data, other plugins, and other settings
+stay untouched.
+
+Activation checks, explicit `apiBaseURL` setup, and rollback are in the
+[deployment guide](https://github.com/hffmnnj/opencode-cross-communication/blob/main/docs/DEPLOY.md).
 
 ### Session-activity access
 
@@ -60,7 +59,23 @@ disable chat delivery (`unavailable`) instead of guessing.
 For a non-managed server, set the plugin's `apiBaseURL` option and the
 server's `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`. That
 explicit mode does not fall back to discovery. Credentials are not logged
-or persisted. Details are in [docs/DEPLOY.md](docs/DEPLOY.md).
+or persisted. Details are in the
+[deployment guide](https://github.com/hffmnnj/opencode-cross-communication/blob/main/docs/DEPLOY.md).
+
+## Development
+
+To work on the plugin from source, use the local directory form:
+
+```sh
+git clone https://github.com/hffmnnj/opencode-cross-communication.git
+cd opencode-cross-communication
+bun install && bun run check
+```
+
+`bun run check` typechecks, runs the tests, and builds `dist/index.js`.
+Keep the root `index.ts`: OpenCode's local-directory loader resolves it.
+For development, add the checkout's **absolute** directory to `plugins`
+instead of the npm package name, and do not list both.
 
 ## Use
 
