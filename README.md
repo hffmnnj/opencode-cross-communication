@@ -69,7 +69,7 @@ your session discovers; native direct tool names use an underscore
 namespace prefix.
 
 ```ts
-// List family members with active/archived state.
+// List current family members with active/archived state.
 await tools.agent_chat.members();
 // { self, rootID, members: [{ sessionID, parentID?, agent?, title?, archived, active }] }
 
@@ -114,6 +114,10 @@ Tool errors use: `invalid_input`, `not_allowed`, `inactive`, `not_found`,
   inactive session fails with `inactive`; inactive group members are
   skipped. Archived sessions are not valid direct recipients and are
   skipped in group fan-out.
+- **Recent family list.** `members` includes active sessions regardless of
+  age, plus inactive sessions for five minutes after their native idle time
+  (or last update when no idle time is recorded). Older inactive ancestors
+  are still traversed so their active descendants remain visible.
 - **Threads keep their audience.** A reply reaches the original sender
   and recipients, minus you, limited to those still active. Agents that
   join the family later are not added.
@@ -159,11 +163,15 @@ Tool errors use: `invalid_input`, `not_allowed`, `inactive`, `not_found`,
 | --- | --- |
 | Message text | 8,000 characters |
 | Recipients per message | 32, including `group` fan-out |
-| Family size | 64 sessions, including the root |
+| Family size | 64 active or recently inactive members |
 | Ancestry chain | 64 sessions, including the caller |
 | Messages per sender | 20 per rolling 60 seconds |
 | Retained chat messages | 500 per family |
 | History page | 1–50 messages, default 50 |
+
+Family discovery scans at most 10,000 session records (including the root)
+and 10,000 pages across all parents, including empty pages. Exceeding either
+bound fails with `family_limit` rather than returning an incomplete family.
 
 These are size, flood, discovery, and storage bounds, not liveness
 guarantees.
@@ -186,7 +194,7 @@ cache hits cannot be guaranteed.
   native tools, durable user prompt admission, and plugin storage. The
   running server's `/openapi.json` is the compatibility authority for this
   installation.
-- [Codex multi-agent tool definitions](https://github.com/openai/codex/blob/main/codex-rs/core/tools/handlers/multi_agents_spec.rs):
+- [Codex multi-agent tool definitions](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents_spec.rs):
   `send_message` queues coordination without triggering a new turn;
   `followup_task` is a separate lifecycle operation. Group chat and
   private history here are this plugin's own design, not claims about

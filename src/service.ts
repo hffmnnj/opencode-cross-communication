@@ -8,6 +8,8 @@ import {
 type StoredMessage = ChatMessage & { readonly requestFingerprint?: string };
 interface StoredLog extends ChatLog { readonly messages: readonly StoredMessage[] }
 const locks = new Map<string, Promise<void>>();
+const FAMILY_RECORD_SCAN_LIMIT = 10_000;
+const FAMILY_PAGE_SCAN_LIMIT = 10_000;
 
 async function locked<T>(key: string, run: () => Promise<T>): Promise<T> {
   const previous = locks.get(key) ?? Promise.resolve();
@@ -129,12 +131,15 @@ export function createChatService(ports: ChatPorts): ChatService {
   async function family(root: SessionRecord, signal?: AbortSignal): Promise<SessionRecord[]> {
     const result = [root];
     const seen = new Set([root.id]);
+    let pagesScanned = 0;
     for (let index = 0; index < result.length; index++) {
       const parent = result[index]!;
       let cursor: string | undefined;
       const cursors = new Set<string>();
       do {
         aborted(signal);
+        if (pagesScanned >= FAMILY_PAGE_SCAN_LIMIT) fail("family_limit", "Family discovery exceeds 10,000 pages.");
+        pagesScanned += 1;
         let page: Awaited<ReturnType<ChatPorts["session"]["list"]>>;
         try {
           page = await ports.session.list({ parentID: parent.id, limit: LIMITS.members, ...(cursor ? { cursor } : {}) }, { signal });
@@ -145,9 +150,9 @@ export function createChatService(ports: ChatPorts): ChatService {
           if (!child || !nonempty(child.id) || child.parentID !== parent.id || !object(child.time) || seen.has(child.id)) {
             fail("not_allowed", "Family discovery could not be verified.");
           }
+          if (result.length >= FAMILY_RECORD_SCAN_LIMIT) fail("family_limit", "Family discovery exceeds 10,000 records.");
           seen.add(child.id);
           result.push(child);
-          if (result.length > LIMITS.members) fail("family_limit", "Family exceeds 64 members.");
         }
         const next = page.cursor.next;
         if (next !== undefined && next !== null && (!nonempty(next) || cursors.has(next))) {
@@ -157,6 +162,18 @@ export function createChatService(ports: ChatPorts): ChatService {
         if (cursor) cursors.add(cursor);
       } while (cursor !== undefined);
     }
+    return result;
+  }
+
+  function currentFamily(discovered: readonly SessionRecord[], active: Readonly<Record<string, { readonly type: "running" }>>): SessionRecord[] {
+    const cutoff = now() - 300_000;
+    const result = discovered.filter((member) => {
+      if (isActive(active, member.id)) return true;
+      const lastIdle = member.time.idle === undefined ? member.time.updated : member.time.idle;
+      if (typeof lastIdle !== "number" || !Number.isFinite(lastIdle)) fail("unavailable", "Session inactivity could not be verified.");
+      return lastIdle >= cutoff;
+    });
+    if (result.length > LIMITS.members) fail("family_limit", "Family exceeds 64 members.");
     return result;
   }
 
@@ -298,7 +315,7 @@ export function createChatService(ports: ChatPorts): ChatService {
         kind = "group";
         const discovered = await family(root, signal);
         active = await activeSessions(signal);
-        recipients = discovered.filter((member) => member.id !== caller && member.time.archived === undefined && isActive(active, member.id)).map((member) => member.id);
+        recipients = currentFamily(discovered, active).filter((member) => member.id !== caller && member.time.archived === undefined && isActive(active, member.id)).map((member) => member.id);
         if (recipients.length === 0) fail("inactive", inactiveDetail);
       } else {
         kind = "direct";
@@ -336,7 +353,7 @@ export function createChatService(ports: ChatPorts): ChatService {
       const { root } = await ancestry(caller, signal);
       const discovered = await family(root, signal);
       const active = await activeSessions(signal);
-      return { self: caller, rootID: root.id, members: discovered.map((member) => asParticipant(member, isActive(active, member.id))) };
+      return { self: caller, rootID: root.id, members: currentFamily(discovered, active).map((member) => asParticipant(member, isActive(active, member.id))) };
     },
     send(caller, input, operationID, signal) { return write(caller, input, operationID, input.to, undefined, signal); },
     reply(caller, input, operationID, signal) {

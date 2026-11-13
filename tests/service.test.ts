@@ -85,6 +85,86 @@ describe("members", () => {
     expect(byId.get(alice)?.active).toBe(true);
   });
 
+  test("members_and_group_keep_active_descendants_among_old_historical_sessions", async () => {
+    const { ports, svc, root, alice, bob, carol } = rig();
+    for (let i = 0; i < 80; i += 1) ports.addSession(`ses-old-${i.toString().padStart(2, "0")}`, root);
+    ports.addSession("ses-active-nested", "ses-old-00");
+    ports.advance(300_001);
+    ports.activeSet.add("ses-active-nested");
+
+    const result = await svc.members(alice);
+    expect(result.members.map((member) => member.sessionID).sort()).toEqual(
+      [root, alice, bob, carol, "ses-active-nested"].sort(),
+    );
+    expect(result.members.find((member) => member.sessionID === "ses-active-nested")?.active).toBe(true);
+
+    const message = await svc.send(alice, { to: "group", text: "team" }, "op-old-family");
+    expect(message.receipts.map((receipt) => receipt.sessionID).sort()).toEqual(
+      [root, bob, carol, "ses-active-nested"].sort(),
+    );
+    expect(message.receipts.every((receipt) => receipt.status === "admitted")).toBe(true);
+    expect(promptTargets(ports).sort()).toEqual([root, bob, carol, "ses-active-nested"].sort());
+    expect(ports.promptCalls.every((call) => call.resume === false)).toBe(true);
+  });
+
+  test("members_omit_inactive_only_after_five_minutes_since_idle", async () => {
+    const { ports, svc, root, alice, bob } = rig();
+    ports.activeSet.delete(bob);
+    const record = ports.sessions.get(bob)!;
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: ports.nowValue } });
+    ports.advance(300_000);
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).toContain(bob);
+    ports.advance(1);
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).not.toContain(bob);
+
+    // A later metadata update does not make the idle session active again.
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: record.time.updated, updated: ports.nowValue } });
+    expect((await svc.members(alice)).members.map((member) => member.sessionID)).not.toContain(bob);
+    ports.activeSet.add(bob);
+    const result = await svc.members(alice);
+    expect(result.rootID).toBe(root);
+    expect(result.members.find((member) => member.sessionID === bob)?.active).toBe(true);
+
+    ports.activeSet.delete(bob);
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: ports.nowValue } });
+    expect((await svc.members(alice)).members.find((member) => member.sessionID === bob)?.active).toBe(false);
+  });
+
+  test("members_reject_unverifiable_inactivity_timestamp", async () => {
+    const { ports, svc, alice, bob } = rig();
+    ports.activeSet.delete(bob);
+    const record = ports.sessions.get(bob)!;
+    ports.sessions.set(bob, { ...record, time: { ...record.time, idle: Number.NaN } });
+    const error = await captureError(svc.members(alice));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("unavailable");
+  });
+
+  test("group_uses_activity_snapshot_after_family_discovery", async () => {
+    const { ports, svc, alice, bob, root, carol } = rig();
+    ports.advance(300_001);
+    ports.activeQueue.push(new Set([root, alice, carol]));
+    const message = await svc.send(alice, { to: "group", text: "team" }, "op-newly-active");
+    expect(message.receipts.map((receipt) => receipt.sessionID).sort()).toEqual([root, bob, carol].sort());
+    expect(promptTargets(ports).sort()).toEqual([root, bob, carol].sort());
+  });
+
+  test("group_rejects_unverified_descendant_even_below_an_old_ancestor", async () => {
+    const { ports, svc, alice, root } = rig();
+    ports.addSession("ses-old-parent", root);
+    ports.addSession("ses-outsider", "ses-different-root");
+    ports.advance(300_001);
+    const list = ports.session.list;
+    ports.session.list = async (input, options) => input.parentID === "ses-old-parent"
+      ? { data: [ports.sessions.get("ses-outsider")!], cursor: {} }
+      : list(input, options);
+
+    const error = await captureError(svc.send(alice, { to: "group", text: "team" }, "op-bad-ancestry"));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("not_allowed");
+    expect(ports.promptCalls).toHaveLength(0);
+  });
+
   test("members_cyclic_ancestry_fails_closed", async () => {
     const { ports, svc } = rig();
     ports.addSession("ses-x", "ses-y", { agent: "x-agent" });
@@ -119,6 +199,98 @@ describe("members", () => {
     const error = await captureError(svc.members(alice));
     expect(error).toBeInstanceOf(ChatError);
     expect((error as ChatError).code).toBe("family_limit");
+  });
+
+  test("members_family_scan_rejects_over_10000_records_including_old_members", async () => {
+    const { ports, svc, root } = rig();
+    ports.advance(300_001);
+    const oldChildren = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `ses-historical-${index}`, parentID: root, time: { created: 1, updated: 1 },
+    }));
+    let pages = 0;
+    ports.session.list = async ({ parentID, cursor, limit }) => {
+      pages += 1;
+      if (parentID !== root) return { data: [], cursor: {} };
+      const start = cursor ? Number(cursor) : 0;
+      const end = start + (limit ?? 64);
+      return { data: oldChildren.slice(start, end), cursor: { next: end < oldChildren.length ? String(end) : null } };
+    };
+
+    const error = await captureError(svc.members(root));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 records");
+    expect(pages).toBe(157);
+  });
+
+  test("group_family_scan_stops_after_10000_empty_pages_with_unique_cursors", async () => {
+    const { ports, svc, root } = rig();
+    let pages = 0;
+    ports.session.list = async () => {
+      pages += 1;
+      if (pages > 10_000) throw new Error("unbounded family scan");
+      return { data: [], cursor: { next: `cursor-${pages}` } };
+    };
+
+    const error = await captureError(svc.send(root, { to: "group", text: "team" }, "op-empty-cursors"));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 pages");
+    expect(pages).toBe(10_000);
+    expect(ports.promptCalls).toHaveLength(0);
+    expect(ports.storageSets).toHaveLength(0);
+  });
+
+  test("members_family_scan_accepts_a_terminal_10000th_page", async () => {
+    const { ports, svc, root } = rig();
+    let pages = 0;
+    ports.session.list = async () => {
+      pages += 1;
+      return { data: [], cursor: { next: pages < 10_000 ? `cursor-${pages}` : null } };
+    };
+
+    const result = await svc.members(root);
+    expect(result.members.map((member) => member.sessionID)).toEqual([root]);
+    expect(pages).toBe(10_000);
+  });
+
+  test("members_family_scan_counts_pages_across_all_parents", async () => {
+    const { ports, svc, root } = rig();
+    const children = Array.from({ length: 5_000 }, (_, index) => ({
+      id: `ses-child-${index}`, parentID: root, time: { created: 1, updated: 1 },
+    }));
+    let pages = 0;
+    ports.session.list = async ({ parentID, cursor, limit }) => {
+      pages += 1;
+      if (parentID !== root) return { data: [], cursor: { next: cursor ? null : "second-page" } };
+      const start = cursor ? Number(cursor) : 0;
+      const end = start + (limit ?? 64);
+      return { data: children.slice(start, end), cursor: { next: end < children.length ? String(end) : null } };
+    };
+
+    const error = await captureError(svc.members(root));
+    expect(error).toBeInstanceOf(ChatError);
+    expect((error as ChatError).code).toBe("family_limit");
+    expect((error as ChatError).message).toContain("10,000 pages");
+    expect(pages).toBe(10_000);
+  });
+
+  test("members_family_scan_accepts_10000_records_and_pages", async () => {
+    const { ports, svc, root } = rig();
+    ports.advance(300_001);
+    let pages = 0;
+    ports.session.list = async ({ parentID }) => {
+      pages += 1;
+      const parentIndex = parentID === root ? 0 : Number(parentID?.slice("ses-chain-".length));
+      const data = parentIndex < 9_999
+        ? [{ id: `ses-chain-${parentIndex + 1}`, parentID, time: { created: 1, updated: 1 } }]
+        : [];
+      return { data, cursor: {} };
+    };
+
+    const result = await svc.members(root);
+    expect(result.members.map((member) => member.sessionID)).toEqual([root]);
+    expect(pages).toBe(10_000);
   });
 
   test("members_unknown_caller_fails_closed", async () => {
