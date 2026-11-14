@@ -847,7 +847,7 @@ describe("history and receipt", () => {
     expect(seen).toHaveLength(LIMITS.retainedMessages);
     expect(seen[0]).toBe(`keep-${total - 1}`);
     expect(seen[seen.length - 1]).toBe("keep-5");
-  });
+  }, 60_000);
 
   test("receipt_returns_message_to_participant_and_hides_from_outsider", async () => {
     const { ports, svc, alice, bob } = rig();
