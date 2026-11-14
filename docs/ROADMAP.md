@@ -9,6 +9,8 @@
 - Delivery is active-only: native session activity decides recipients, and an
   idle session is never woken. Messages arrive as native user input with
   stable inbox IDs and plugin metadata.
+- Peer messages and chat tool results render as Markdown (sender header,
+  quoted body, peer-data notice, summarized receipts) instead of JSON.
 
 ## Delivered
 
