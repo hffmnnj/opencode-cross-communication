@@ -162,7 +162,9 @@ test("send_tool_uses_tool_context_identity_and_forwards_operation_id", async () 
   expect(sendTool).not.toBeUndefined();
 
   spy.calls.length = 0;
-  await sendTool!.execute({ to: "ses-bob", text: "hello from tool" }, ctx);
+  const result = await sendTool!.execute({ to: "ses-bob", text: "hello from tool" }, ctx) as { content?: string };
+  expect(result.content).toContain("**Sent** · DM from `ses-alice-agent`");
+  expect(result.content).not.toContain('"receipts"');
   const call = spy.calls.find((entry) => entry.method === "send");
   expect(call).not.toBeUndefined();
   expect(call?.caller).toBe("ses-alice");
@@ -215,7 +217,8 @@ test("history_tool_delegates_with_tool_context_caller_and_signal", async () => {
   const aborter = new AbortController();
   const ctx = nativeContext("ses-carol", "op-tool-history", aborter.signal);
   spy.calls.length = 0;
-  await historyTool!.execute({ limit: 5 }, ctx);
+  const result = await historyTool!.execute({ limit: 5 }, ctx) as { content?: string };
+  expect(result.content).toContain("**History** · 0 messages · newest first");
   const call = spy.calls.find((entry) => entry.method === "history");
   expect(call).not.toBeUndefined();
   expect(call?.caller).toBe("ses-carol");
@@ -228,7 +231,8 @@ test("members_tool_delegates_with_tool_context_caller", async () => {
   expect(membersTool).not.toBeUndefined();
 
   spy.calls.length = 0;
-  await membersTool!.execute({}, nativeContext("ses-dave", "op-tool-members"));
+  const result = await membersTool!.execute({}, nativeContext("ses-dave", "op-tool-members")) as { content?: string };
+  expect(result.content).toContain("**Family** · self `ses-dave` · root `ses-root`");
   const call = spy.calls.find((entry) => entry.method === "members");
   expect(call).not.toBeUndefined();
   expect(call?.caller).toBe("ses-dave");

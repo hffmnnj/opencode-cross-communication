@@ -8,6 +8,7 @@ import {
   type SendInput,
 } from "./contract.js";
 import { historyOutput, membersOutput, messageOutput } from "./schemas.ts";
+import { renderHistory, renderMembers, renderMessage } from "./render.ts";
 
 const NAMESPACE = "agent_chat" as const;
 
@@ -39,7 +40,7 @@ export async function registerTools(ctx: Plugin.Context, service: ChatService): 
       execute: async (_input, context) => {
         try {
           const result = await service.members(context.sessionID, context.signal);
-          return { output: result, content: JSON.stringify(result) };
+          return { output: result, content: renderMembers(result) };
         } catch (error) {
           throw toToolError("members", error);
         }
@@ -76,7 +77,7 @@ export async function registerTools(ctx: Plugin.Context, service: ChatService): 
             operationID(context),
             context.signal,
           );
-          return { output: result, content: JSON.stringify(result) };
+          return { output: result, content: renderMessage(result, "Sent") };
         } catch (error) {
           throw toToolError("send", error);
         }
@@ -108,7 +109,7 @@ export async function registerTools(ctx: Plugin.Context, service: ChatService): 
             operationID(context),
             context.signal,
           );
-          return { output: result, content: JSON.stringify(result) };
+          return { output: result, content: renderMessage(result, "Reply sent") };
         } catch (error) {
           throw toToolError("reply", error);
         }
@@ -138,7 +139,7 @@ export async function registerTools(ctx: Plugin.Context, service: ChatService): 
             { threadID: args.threadID, before: args.before, limit: args.limit },
             context.signal,
           );
-          return { output: result, content: JSON.stringify(result) };
+          return { output: result, content: renderHistory(result, context.sessionID) };
         } catch (error) {
           throw toToolError("history", error);
         }
@@ -162,7 +163,7 @@ export async function registerTools(ctx: Plugin.Context, service: ChatService): 
         const args = input as { messageID: string };
         try {
           const result = await service.receipt(context.sessionID, args.messageID, context.signal);
-          return { output: result, content: JSON.stringify(result) };
+          return { output: result, content: renderMessage(result, "Message", context.sessionID) };
         } catch (error) {
           throw toToolError("receipt", error);
         }

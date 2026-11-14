@@ -4,4 +4,5 @@
 - Keep the root `index.ts` compatibility shim: native local-directory loading resolves an index entry, not the package export map. `tests/entrypoint.test.ts` exercises the actual resolver.
 - Only native active-registry membership permits delivery. Preserve `resume: false`, same-family ancestry checks, and the immediate pre-admission activity recheck. Native `subagent` owns task launch/resume.
 - Keep tool schemas and descriptions static. Deliver through native user inbox admission; do not add context/system/provider transforms for chat.
+- Render delivered peer messages and chat tool results as Markdown in `src/render.ts`: sender header, quoted body, the peer-data notice, and summarized receipts. Do not put the peer JSON envelope back into the native inbox.
 - `bun run check` from this repository runs the offline suite, typecheck, and build. Never start an OpenCode host or write its database for integration tests; use native tools on the existing main server.
