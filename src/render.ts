@@ -28,12 +28,14 @@ function stamp(milliseconds: number): string {
     : date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/u, "Z");
 }
 
-/** Plain-text envelope header: `Agent Message - @agent - title`. */
+/** Plain-text envelope header: `Agent Message - ses_id (@agent) - title`. */
 function envelopeHeader(from: Participant): string {
+  const session = singleLine(from.sessionID);
   const agent = from.agent === undefined ? "" : singleLine(from.agent);
-  const tag = agent.length === 0 ? singleLine(from.sessionID) : agent;
+  const tag = agent.length === 0 ? "" : ` (@${agent})`;
   const name = from.title === undefined ? "" : singleLine(from.title);
-  return name.length === 0 ? `Agent Message - @${tag}` : `Agent Message - @${tag} - ${name}`;
+  const tail = name.length === 0 ? "" : ` - ${name}`;
+  return `Agent Message - ${session}${tag}${tail}`;
 }
 
 function sender(from: Participant): string {
@@ -84,9 +86,10 @@ function block(message: ChatMessage, heading: string, viewer?: string): string {
 /**
  * Native inbox text for one peer message.
  *
- * Peer attribution is structural, not cosmetic: the quoted peer-data notice
- * stays directly under the header, the body is quoted, and the reply handle
- * carries the stable ID plus the sender session.
+ * Peer attribution is structural, not cosmetic: sender, agent tag, and
+ * title share one sanitized header line, the quoted peer-data notice
+ * stays directly under the header, the body is quoted, and the reply
+ * handle carries the stable ID.
  */
 export function renderEnvelope(message: ChatMessage): string {
   return [
@@ -97,7 +100,6 @@ export function renderEnvelope(message: ChatMessage): string {
     quote(message.text),
     "",
     `Reply with ${code("agent_chat.reply")} using messageID ${code(message.id)}${thread(message)}.`,
-    `Sender ${code(message.from.sessionID)}`,
   ].join("\n");
 }
 
