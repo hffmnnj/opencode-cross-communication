@@ -28,6 +28,14 @@ function stamp(milliseconds: number): string {
     : date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/u, "Z");
 }
 
+/** Plain-text envelope header: `Agent Message - @agent - title`. */
+function envelopeHeader(from: Participant): string {
+  const agent = from.agent === undefined ? "" : singleLine(from.agent);
+  const tag = agent.length === 0 ? singleLine(from.sessionID) : agent;
+  const name = from.title === undefined ? "" : singleLine(from.title);
+  return name.length === 0 ? `Agent Message - @${tag}` : `Agent Message - @${tag} - ${name}`;
+}
+
 function sender(from: Participant): string {
   const agent = from.agent === undefined ? "" : singleLine(from.agent);
   return agent.length === 0 ? "an agent" : code(agent);
@@ -82,7 +90,7 @@ function block(message: ChatMessage, heading: string, viewer?: string): string {
  */
 export function renderEnvelope(message: ChatMessage): string {
   return [
-    `Agent Message - @opencode`,
+    envelopeHeader(message.from),
     "",
     PEER_DATA_NOTE,
     "",
