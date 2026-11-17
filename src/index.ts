@@ -3,6 +3,8 @@ import { createActiveSessionReader } from "./activity.ts";
 import type { ChatPorts } from "./contract.ts";
 import { createChatService } from "./service.ts";
 import { registerTools } from "./tools.ts";
+import { createSessionService } from "./sessions.ts";
+import { registerSessionTools } from "./session-tools.ts";
 
 export { createChatService } from "./service.ts";
 export { ChatError, LIMITS } from "./contract.ts";
@@ -28,5 +30,6 @@ export default Plugin.define({
     };
     const service = createChatService(ports);
     await registerTools(ctx, service);
+    await registerSessionTools(ctx, createSessionService(ports));
   },
 });
