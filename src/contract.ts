@@ -13,6 +13,8 @@ export interface SessionRecord {
   readonly parentID?: string;
   readonly agent?: string;
   readonly title?: string;
+  readonly projectID?: string;
+  readonly location?: { readonly directory: string };
   readonly time: { readonly created: number; readonly updated: number; readonly idle?: number; readonly archived?: number };
 }
 

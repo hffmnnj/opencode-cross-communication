@@ -1,11 +1,12 @@
 <p align="center">
-  <img src="https://unpkg.com/hffmnnj.cross-communication@0.1.3/assets/banner.png" alt="Cross Communication: signals between agents, illustrated with maritime signal flags" width="100%">
+  <img src="https://unpkg.com/hffmnnj.cross-communication@0.2.0/assets/banner.png" alt="Cross Communication: signals between agents, illustrated with maritime signal flags" width="100%">
 </p>
 
 # Cross Communication
 
 Async direct messages and one shared group chat for agents in the same
-OpenCode session family.
+OpenCode session family, plus explicit private chat between running root
+sessions.
 
 Messages arrive as native user input with `delivery: "steer"` and
 `resume: false`. A running agent picks them up at a work boundary without
@@ -79,7 +80,7 @@ instead of the npm package name, and do not list both.
 
 ## Use
 
-Tools live in the `agent_chat` namespace. Use the Code Mode signatures
+Family tools live in the `agent_chat` namespace. Use the Code Mode signatures
 your session discovers; native direct tool names use an underscore
 namespace prefix.
 
@@ -112,6 +113,27 @@ await tools.agent_chat.history({ threadID: "chat_...", before: "chat_...", limit
 await tools.agent_chat.receipt({ messageID: "chat_..." });
 ```
 
+For cross-session communication use the separate `agent_sessions` namespace:
+
+```ts
+// Running root sessions in this project; opt in to search all projects.
+await tools.agent_sessions.list({ query: "dashboard" });
+await tools.agent_sessions.list({ allProjects: true, query: "/work", limit: 20 });
+// Use the returned next ID as after for the next page.
+await tools.agent_sessions.list({ allProjects: true, after: "ses_...", limit: 20 });
+
+await tools.agent_sessions.send({ to: "ses_...", text: "Can we coordinate?", requestID: "coordinate-1" });
+await tools.agent_sessions.reply({ messageID: "cross_...", text: "Yes." });
+await tools.agent_sessions.history({ threadID: "cross_...", limit: 20 });
+await tools.agent_sessions.receipt({ messageID: "cross_..." });
+```
+
+Discovery matches the session title, ID, agent, project ID, and directory.
+It uses native `projectID` and `location.directory`; the current project is
+the calling root's project. Results contain only running, unarchived roots,
+exclude the caller, and use the live activity registry. A registry with more
+than 10,000 entries fails closed rather than scanning without a bound.
+
 Tool errors use: `invalid_input`, `not_allowed`, `inactive`, `not_found`,
 `family_limit`, `rate_limit`, `unavailable`, `id_conflict`.
 
@@ -137,9 +159,15 @@ recipient, and message bodies are quoted.
 
 ## Audience and eligibility
 
-- **Same family only.** Membership is verified root-session ancestry,
-  not agent name, title, or working directory. Nested descendants of the
-  root are included; there is no cross-root chat.
+- **Family isolation.** `agent_chat` membership is verified root-session
+  ancestry, not agent name, title, or working directory. Nested descendants
+  are included; family chat cannot reach another root.
+- **Explicit root-to-root chat.** `agent_sessions` messages are private to
+  the two root sessions, stored separately from family logs, and invisible
+  to unrelated roots and all descendants. Only unarchived structural roots
+  may use these tools; an agent's display name does not confer root status.
+  Both sender and recipient must still be running and eligible immediately
+  before every new or retried admission. Replies use the same checks.
 - **Private and group visibility.** A direct message is visible to its
   sender and recipients. A group message is visible to the whole family.
 - **Runtime identity.** `send` and `reply` act as the session executing
@@ -188,8 +216,9 @@ recipient, and message bodies are quoted.
   target, or replied-to message under that `requestID` fails with
   `id_conflict`. These guarantees cover the retained log, not indefinite
   exactly-once delivery. OpenCode retains the native transcript separately.
-- **Stored history is local state.** Each family has a bounded chat log in
-  versioned plugin storage. This version provides no migration for stored
+- **Stored history is local state.** Each family has a bounded chat log and
+  cross-session chat has a separate bounded shared log in versioned plugin
+  storage. This version provides no migration for stored
   chat data, so changing the storage layout or key would orphan existing
   history. Do not treat the log as durable messaging infrastructure.
 
@@ -203,6 +232,7 @@ recipient, and message bodies are quoted.
 | Ancestry chain | 64 sessions, including the caller |
 | Messages per sender | 20 per rolling 60 seconds |
 | Retained chat messages | 500 per family |
+| Retained cross-session messages | 500 total |
 | History page | 1–50 messages, default 50 |
 
 Family discovery scans at most 10,000 session records (including the root)

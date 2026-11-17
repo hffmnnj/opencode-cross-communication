@@ -91,7 +91,7 @@ function block(message: ChatMessage, heading: string, viewer?: string): string {
  * stays directly under the header, the body is quoted, and the reply
  * handle carries the stable ID.
  */
-export function renderEnvelope(message: ChatMessage): string {
+export function renderEnvelope(message: ChatMessage, replyTool = "agent_chat.reply"): string {
   return [
     envelopeHeader(message.from),
     "",
@@ -99,7 +99,7 @@ export function renderEnvelope(message: ChatMessage): string {
     "",
     quote(message.text),
     "",
-    `Reply with ${code("agent_chat.reply")} using messageID ${code(message.id)}${thread(message)}.`,
+    `Reply with ${code(replyTool)} using messageID ${code(message.id)}${thread(message)}.`,
   ].join("\n");
 }
 
